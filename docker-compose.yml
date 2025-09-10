@@ -1,0 +1,26 @@
+networks:
+  theprepared:
+    external: true
+
+volumes:
+  freshrss_data:
+
+
+services:
+  freshrss_app:
+    image: "freshrss/freshrss"
+    container_name: "freshrss_app"
+    restart: unless-stopped
+    volumes:
+      - freshrss_data:/var/www/FreshRSS/data
+      - ./freshrss-app/extensions:/var/www/FreshRSS/extensions
+    environment:
+      FRSS_DB_TYPE: pgsql
+      FRSS_DB_HOST: postgres_db
+      FRSS_DB_NAME: ${POSTGRES_DB_FRSS}
+      FRSS_DB_USER: ${POSTGRES_USER}
+      FRSS_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      CRON_MIN: "0,30"
+    networks:
+      - theprepared
+
