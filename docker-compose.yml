@@ -14,7 +14,10 @@ services:
     volumes:
       - freshrss_data:/var/www/FreshRSS/data
       - ./freshrss-app/extensions:/var/www/FreshRSS/extensions
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     environment:
+      TZ: Asia/Seoul
       FRSS_DB_TYPE: pgsql
       FRSS_DB_HOST: postgres_db
       FRSS_DB_NAME: ${POSTGRES_DB_FRSS}
