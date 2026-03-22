@@ -11,6 +11,11 @@ services:
     image: "freshrss/freshrss"
     container_name: "freshrss_app"
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 256M
     volumes:
       - freshrss_data:/var/www/FreshRSS/data
       - ./freshrss-app/extensions:/var/www/FreshRSS/extensions
