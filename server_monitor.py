@@ -7,8 +7,9 @@
   2. 투자 시스템 (Invest): 5대 컨테이너, Celery 워커/비트, 웹소켓 워치독, V2 헬스체크
   3. 블로그 (Django Blog): 3대 컨테이너, Port 8011 HTTP 200
   4. 오토포스트 (Autopost): 5대 컨테이너, Celery 워커
-  5. 인프라: PostgreSQL (5432), MariaDB (3306), Redis (6379), Nginx, Traefik
-  6. 시스템 자원: 디스크 여유 공간 (<85%), 가용 메모리 (>2GB), CPU 부하
+  5. 인프라: PostgreSQL (5432), Redis (6379), Nginx, Traefik
+  6. 백업 시스템: 주간 PostgreSQL 및 암호화 Credential 백업 건전성
+  7. 시스템 자원: 디스크 여유 공간 (<85%), 가용 메모리 (>2GB), CPU 부하
 """
 
 import os
@@ -144,6 +145,64 @@ def check_system_resources() -> dict:
     }
 
 
+def check_backup_status() -> dict:
+    """정기 백업 상태 점검 (최근 8일 이내 정상 백업 존재 여부)"""
+    backup_db_dir = os.path.join(BASE_DIR, "server-backups", "db")
+    backup_cred_dir = os.path.join(BASE_DIR, "server-backups", "credentials")
+
+    now = time.time()
+    max_age_sec = 8 * 86400  # 8일 (주간 백업 + 1일 버퍼)
+
+    latest_db_file = None
+    latest_db_mtime = 0
+    if os.path.exists(backup_db_dir):
+        for fname in os.listdir(backup_db_dir):
+            if fname.startswith("postgresql_all_") and fname.endswith(".sql.gz"):
+                fpath = os.path.join(backup_db_dir, fname)
+                mtime = os.path.getmtime(fpath)
+                if mtime > latest_db_mtime:
+                    latest_db_mtime = mtime
+                    latest_db_file = fpath
+
+    latest_cred_file = None
+    latest_cred_mtime = 0
+    if os.path.exists(backup_cred_dir):
+        for fname in os.listdir(backup_cred_dir):
+            if fname.startswith("credentials_") and fname.endswith(".tar.gz.enc"):
+                fpath = os.path.join(backup_cred_dir, fname)
+                mtime = os.path.getmtime(fpath)
+                if mtime > latest_cred_mtime:
+                    latest_cred_mtime = mtime
+                    latest_cred_file = fpath
+
+    if not latest_db_file or not latest_cred_file:
+        return {
+            "ok": False,
+            "summary": "백업 파일 부재 (DB 또는 Credential 파일 없음)",
+            "issue": "정기 백업 파일이 존재하지 않습니다."
+        }
+
+    db_age = now - latest_db_mtime
+    cred_age = now - latest_cred_mtime
+
+    if db_age > max_age_sec or cred_age > max_age_sec:
+        delay_days = round(max(db_age, cred_age) / 86400, 1)
+        return {
+            "ok": False,
+            "summary": f"백업 지연 감지 ({delay_days}일 전 백업이 마지막)",
+            "issue": f"정기 백업이 8일 이상 지연되었습니다 (마지막 백업: {delay_days}일 전)."
+        }
+
+    latest_dt = datetime.fromtimestamp(latest_db_mtime, KST).strftime("%Y-%m-%d %H:%M")
+    db_size_mb = round(os.path.getsize(latest_db_file) / (1024 * 1024), 1)
+
+    return {
+        "ok": True,
+        "summary": f"최신 백업 정상 ({latest_dt} | DB {db_size_mb}MB)",
+        "issue": None
+    }
+
+
 def send_discord_alert(report: dict, webhook_url: str):
     """디스코드 웹훅으로 상태 보고 전송"""
     if not webhook_url:
@@ -264,7 +323,7 @@ def run_full_server_inspection() -> dict:
     }
 
     # 5. 인프라 DB & 웹 프록시
-    infra_containers = ["postgres_db", "mariadb_db", "redis", "traefik", "nginx"]
+    infra_containers = ["postgres_db", "redis", "traefik", "nginx"]
     infra_up = [c for c in infra_containers if containers.get(c, {}).get("state") == "running"]
     infra_ok = len(infra_up) == len(infra_containers)
     if not infra_ok:
@@ -272,7 +331,17 @@ def run_full_server_inspection() -> dict:
 
     domains["5. 인프라 (DB & 프록시)"] = {
         "ok": infra_ok,
-        "summary": f"Postgres/MariaDB/Redis/Nginx/Traefik {len(infra_up)}/5 Up"
+        "summary": f"Postgres/Redis/Nginx/Traefik {len(infra_up)}/4 Up"
+    }
+
+    # 6. 백업 시스템 (Backup)
+    backup_stat = check_backup_status()
+    if not backup_stat["ok"] and backup_stat.get("issue"):
+        issues.append(backup_stat["issue"])
+
+    domains["6. 백업 시스템 (Backup)"] = {
+        "ok": backup_stat["ok"],
+        "summary": backup_stat["summary"]
     }
 
     # 종합 판정 결정

@@ -1,5 +1,7 @@
 .env
-
+.backup_key
+*.log
+server_monitor.log
 
 __pycache__/
 *.py[cod]
